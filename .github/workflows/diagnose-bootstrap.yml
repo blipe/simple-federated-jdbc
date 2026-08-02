@@ -1,0 +1,51 @@
+name: Diagnose bootstrap chunk
+
+on:
+  pull_request:
+    branches: [main]
+    types: [reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    if: github.event.pull_request.head.ref == 'agent/real-maven-validation'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+      - name: Locate damaged block
+        run: |
+          python3 - <<'PY'
+          import hashlib, pathlib
+          expected = [
+          '35543cfdcac40ea27c3d74cd380cd9e4bac95dcd82b0802c0e708c63b19e671c',
+          '9b000648a66e7aa89bbae4de4ddb149121275f79f2d3031390ef75bad5f35131',
+          '73c92ac6432c916681850c8d0115c612f2c6761f41a50d0254e050c6b3998acd',
+          '6d126f54a3e51401478d2615a53ec57836327fbb7fd8f0462f4b487c1e1d62d3',
+          'e7274777d80ec0cd25544d2ace71efa0a39048b94b8fab539572568c31b49f07',
+          '2a07903fa34f6349e7775ee68598b34b22a86e5c8e349e6ef0708e856278d844',
+          '2b6b2f5a80ebc222e3fec6dca54c14cf2ce00bb3a63b8b7501c66a2ab65f36e2',
+          '39327e862644913c7026cae9d93b92cd72e269721fac294d7d036879792d2d6d',
+          '19603e4572bbf99302787309c7c30d97d297971ad774edc279325a06d0aa91d5',
+          '96d50fff801d997ccfb2b6a0f8b1cefcaf120bcd7d01f7608917feaa58bc2615',
+          '73a3ffc8901e1080aa1884b2df4ad71df7c18c61dd8161b466d65cc7d2b40212',
+          '6768a631619136852948d9cb103f875c38289ee458c672ceb117a57d85113d09',
+          '0deaa43435c6aa01d891193d0089f9aa0d6819d8c8a4d8323a732805fe09524b',
+          '18649e41d7a58f0f981f9ea9c6e1fa70e0d968f958c78eeba11406ae821cffba',
+          'b30204d0f20eab2c31a3c88e3d1230c27e8fd894af14ac94f07833f19b1af57c',
+          '797195a1efed438d0024e32526f7056ee71a000884cc89ddb172ef5eea9f632b',
+          '5dcab452545568fc50d2415b8c8ea28b4183e45b237c06e34b5e5f07c141011f',
+          '75f6ed718660dc441038b3eac8a31e6cf2b8f6483328562f0c725efb788f5c66',
+          '3a023126d4de1c3ed81dfc799fdb0d5099926f1cbddc8411a6f33a95e21eeb72',
+          'a593af1f9dcd480e239db2640d340e0542f5aac17cc8a7be4e7c84b0ebb433ea']
+          current = b''.join(pathlib.Path('.bootstrap-core/part-001.b64').read_bytes().split()).decode()
+          print('length', len(current))
+          for index, digest in enumerate(expected):
+              actual = hashlib.sha256(current[index*1000:(index+1)*1000].encode()).hexdigest()
+              print(index, actual, 'OK' if actual == digest else 'MISMATCH')
+              if actual != digest:
+                  break
+          PY
