@@ -1,0 +1,108 @@
+name: Bootstrap project PR
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+
+jobs:
+  bootstrap-and-verify:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'agent/real-maven-validation'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.ref }}
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Verify and extract project archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .bootstrap-core/part-*.b64 | base64 --decode > /tmp/project-core.tar.xz
+          echo '44d418c7c4a3f16cd7f642d98e86b5e3bffdd419b6dd35ee505e515d9982aec8  /tmp/project-core.tar.xz' | sha256sum --check --strict
+          mkdir -p /tmp/project-core
+          tar -xJf /tmp/project-core.tar.xz -C /tmp/project-core
+          cp -a /tmp/project-core/pom.xml .
+          cp -a /tmp/project-core/src .
+          cp -a /tmp/project-core/scripts .
+          chmod +x scripts/*.sh
+
+      - name: Install permanent Maven workflow
+        shell: bash
+        run: |
+          cat > .github/workflows/maven-verify.yml <<'YAML'
+          name: Maven verify
+          on:
+            push:
+              branches: [main, agent/real-maven-validation]
+            pull_request:
+            workflow_dispatch:
+          permissions:
+            contents: read
+          jobs:
+            verify:
+              runs-on: ubuntu-latest
+              timeout-minutes: 30
+              steps:
+                - uses: actions/checkout@v4
+                - uses: actions/setup-java@v4
+                  with:
+                    distribution: temurin
+                    java-version: '21'
+                    cache: maven
+                - name: Verify Maven Central access
+                  run: |
+                    set -euxo pipefail
+                    getent hosts repo.maven.apache.org
+                    curl -fsSI --retry 3 https://repo.maven.apache.org/maven2/
+                    mvn -B -ntp -e dependency:get -Dartifact=org.apache.calcite:calcite-core:1.42.0
+                - name: Maven clean verify
+                  run: mvn -B -ntp -e clean verify
+                - name: Upload test reports
+                  if: always()
+                  uses: actions/upload-artifact@v4
+                  with:
+                    name: surefire-reports
+                    path: '**/target/surefire-reports/**'
+                    if-no-files-found: ignore
+          YAML
+
+      - name: Replace bootstrap with project source
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf .bootstrap .bootstrap-core .github/workflows/bootstrap-project.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Bootstrap Simple Federated JDBC project source'
+          git push origin HEAD:${{ github.event.pull_request.head.ref }}
+
+      - name: Verify Maven Central access
+        run: |
+          set -euxo pipefail
+          getent hosts repo.maven.apache.org
+          curl -fsSI --retry 3 https://repo.maven.apache.org/maven2/
+          mvn -B -ntp -e dependency:get -Dartifact=org.apache.calcite:calcite-core:1.42.0
+
+      - name: Maven clean verify
+        run: mvn -B -ntp -e clean verify
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bootstrap-surefire-reports
+          path: '**/target/surefire-reports/**'
+          if-no-files-found: ignore
