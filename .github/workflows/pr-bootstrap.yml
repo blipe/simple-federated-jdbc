@@ -23,7 +23,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cat .bootstrap-core/part-*.b64 | base64 --decode > /tmp/project-core.tar.xz
+          python3 - <<'PY'
+          import base64, glob, pathlib
+          parts = sorted(glob.glob('.bootstrap-core/part-*.b64'))
+          if not parts:
+              raise SystemExit('no bootstrap chunks found')
+          encoded = b''.join(pathlib.Path(path).read_bytes() for path in parts)
+          compact = b''.join(encoded.split())
+          print('chunks=', len(parts), 'encoded_bytes=', len(compact))
+          pathlib.Path('/tmp/project-core.tar.xz').write_bytes(base64.b64decode(compact, validate=False))
+          PY
           echo '44d418c7c4a3f16cd7f642d98e86b5e3bffdd419b6dd35ee505e515d9982aec8  /tmp/project-core.tar.xz' | sha256sum --check --strict
           mkdir -p /tmp/project-core
           tar -xJf /tmp/project-core.tar.xz -C /tmp/project-core
