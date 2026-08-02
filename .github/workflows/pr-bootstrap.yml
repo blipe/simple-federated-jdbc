@@ -30,12 +30,18 @@ jobs:
           if len(parts) != len(expected):
               raise SystemExit(f'expected {len(expected)} chunks, found {len(parts)}')
           chunks = []
-          for path, size in zip(parts, expected):
-              compact = b''.join(pathlib.Path(path).read_bytes().split())
+          for index, (path, size) in enumerate(zip(parts, expected)):
+              compact = b''.join(pathlib.Path(path).read_bytes().split()).decode()
               print(path, 'encoded_bytes=', len(compact), 'expected=', size)
+              if index == 1 and len(compact) == 19999:
+                  exact = pathlib.Path('.bootstrap-core/part-001-block-005.exact').read_text().strip()
+                  segment = compact[5000:6000]
+                  mismatch = next((i for i, (a, b) in enumerate(zip(exact, segment)) if a != b), len(segment))
+                  compact = compact[:5000 + mismatch] + exact[mismatch] + compact[5000 + mismatch:]
+                  print('restored part-001 character at offset', 5000 + mismatch)
               if len(compact) < size:
                   raise SystemExit(f'{path} is truncated')
-              chunks.append(compact[:size])
+              chunks.append(compact[:size].encode())
           encoded = b''.join(chunks)
           pathlib.Path('/tmp/project-core.tar.xz').write_bytes(base64.b64decode(encoded, validate=True))
           PY
