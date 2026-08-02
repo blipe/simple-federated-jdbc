@@ -1,13 +1,10 @@
 name: Bootstrap project PR
-
 on:
   pull_request:
     branches: [main]
     types: [opened, synchronize, reopened]
-
 permissions:
   contents: write
-
 jobs:
   bootstrap-and-verify:
     if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'agent/real-maven-validation'
@@ -18,79 +15,67 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.ref }}
-
       - name: Verify and extract project archive
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
           import base64, glob, hashlib, pathlib
-          parts = sorted(glob.glob('.bootstrap-core/part-*.b64'))
-          sizes = [20000] * 8 + [16492]
-          hashes = [
-          '8f709013db0c4470af2d40f55bcb180cb3cf11e4b0aff9ce6bca5ccabaaa6c4c',
-          'ee55486c3bc7c4423270ac92d635f2492732020556b1228e14ec473aff6d6831',
-          '0b1f3dbab30d40b22b371e55ed50dd82f40b5978556c2829ac9fa8d3195d12be',
-          '91ca2f8f0fccfec19ea7734351d9587d98528b9fb3bd25d3172a11b77fbde110',
-          'ed16424b67217c8ab94607614ff061322320adb3e6666cd1d61a954e35b360dc',
-          '3abcc3eb852c7e4b06eff153742dfa358ab98607914e57f53f81ab2d2df0cc3d',
-          '3b6698e6e18a165e4bfe9b70ed63e3d38088e6e607043f6093039ea61aa8a8ad',
-          '4b43845efd87991d7329322c39c337077ca731ba2b2da61015eb720f7c6fa5b3',
-          'df62963b7035cde24a4636b6d88a9aef4fd4be019e6640117efa245c6e1f3afb']
-          if len(parts) != len(sizes):
-              raise SystemExit(f'expected {len(sizes)} chunks, found {len(parts)}')
-          chunks = []
-          for index, (path, size, expected_hash) in enumerate(zip(parts, sizes, hashes)):
-              compact = b''.join(pathlib.Path(path).read_bytes().split()).decode()
-              print(path, 'encoded_bytes=', len(compact), 'expected=', size)
-              if index == 1 and len(compact) == 19999:
-                  exact = pathlib.Path('.bootstrap-core/part-001-block-056.exact').read_text().strip()
-                  segment = compact[5600:5700]
-                  repairs = []
-                  for position in range(len(exact)):
-                      candidate = segment[:position] + exact[position] + segment[position:len(exact)-1]
-                      if candidate == exact:
-                          repairs.append(position)
-                  if not repairs:
-                      raise SystemExit('unable to prove part-001 repair')
-                  position = repairs[0]
-                  compact = compact[:5600 + position] + exact[position] + compact[5600 + position:]
-                  print('restored part-001 character at offset', 5600 + position)
-              if len(compact) < size:
-                  raise SystemExit(f'{path} is truncated')
-              compact = compact[:size]
-              actual_hash = hashlib.sha256(compact.encode()).hexdigest()
-              print(path, 'sha256=', actual_hash, 'OK' if actual_hash == expected_hash else 'MISMATCH')
-              if actual_hash != expected_hash:
-                  raise SystemExit(f'{path} content hash mismatch')
-              chunks.append(compact.encode())
-          encoded = b''.join(chunks)
-          pathlib.Path('/tmp/project-core.tar.xz').write_bytes(base64.b64decode(encoded, validate=True))
+          sizes=[20000]*8+[16492]
+          hashes=['8f709013db0c4470af2d40f55bcb180cb3cf11e4b0aff9ce6bca5ccabaaa6c4c','ee55486c3bc7c4423270ac92d635f2492732020556b1228e14ec473aff6d6831','0b1f3dbab30d40b22b371e55ed50dd82f40b5978556c2829ac9fa8d3195d12be','91ca2f8f0fccfec19ea7734351d9587d98528b9fb3bd25d3172a11b77fbde110','ed16424b67217c8ab94607614ff061322320adb3e6666cd1d61a954e35b360dc','3abcc3eb852c7e4b06eff153742dfa358ab98607914e57f53f81ab2d2df0cc3d','3b6698e6e18a165e4bfe9b70ed63e3d38088e6e607043f6093039ea61aa8a8ad','4b43845efd87991d7329322c39c337077ca731ba2b2da61015eb720f7c6fa5b3','df62963b7035cde24a4636b6d88a9aef4fd4be019e6640117efa245c6e1f3afb']
+          parts=sorted(glob.glob('.bootstrap-core/part-*.b64'))
+          if len(parts)!=9: raise SystemExit(f'expected 9 chunks, found {len(parts)}')
+          alphabet='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+          chunks=[]
+          for i,(path,size,want) in enumerate(zip(parts,sizes,hashes)):
+              s=b''.join(pathlib.Path(path).read_bytes().split()).decode()
+              if len(s)==size-1:
+                  found=[]
+                  lo,hi=(5500,5800) if i==1 else (0,len(s)+1)
+                  for pos in range(lo,min(hi,len(s)+1)):
+                      for ch in alphabet:
+                          c=s[:pos]+ch+s[pos:]
+                          if hashlib.sha256(c.encode()).hexdigest()==want:
+                              found.append((pos,ch,c))
+                  if len(found)!=1: raise SystemExit(f'{path}: insertion repair candidates={len(found)}')
+                  pos,ch,s=found[0]
+                  print(path,'inserted',repr(ch),'at',pos)
+              elif len(s)>size:
+                  prefix=s[:size]
+                  if hashlib.sha256(prefix.encode()).hexdigest()==want:
+                      s=prefix
+                  else:
+                      delta=len(s)-size
+                      found=[]
+                      for pos in range(len(s)-delta+1):
+                          c=s[:pos]+s[pos+delta:]
+                          if hashlib.sha256(c.encode()).hexdigest()==want:
+                              found.append((pos,c))
+                      if len(found)!=1: raise SystemExit(f'{path}: deletion repair candidates={len(found)}')
+                      pos,s=found[0]
+                      print(path,'removed',delta,'chars at',pos)
+              if len(s)!=size or hashlib.sha256(s.encode()).hexdigest()!=want:
+                  raise SystemExit(f'{path}: content hash mismatch')
+              chunks.append(s.encode())
+          encoded=b''.join(chunks)
+          pathlib.Path('/tmp/project-core.tar.xz').write_bytes(base64.b64decode(encoded,validate=True))
           PY
-          echo '44d418c7c4a3f16cd7f642d98e86b5e3bffdd419b6dd35ee505e515d9982aec8  /tmp/project-core.tar.xz' | sha256sum --check --strict
+          echo '44d418c7c4a3f16cd7f642d98e86b5e3bffdd419b6dd35ee505e515d9982aec8  /tmp/project-core.tar.xz' | sha256sum -c --strict
           mkdir -p /tmp/project-core
           tar -xJf /tmp/project-core.tar.xz -C /tmp/project-core
-          cp -a /tmp/project-core/pom.xml .
-          cp -a /tmp/project-core/src .
-          cp -a /tmp/project-core/scripts .
+          cp -a /tmp/project-core/pom.xml /tmp/project-core/src /tmp/project-core/scripts .
           chmod +x scripts/*.sh
-
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '21'
           cache: maven
-
-      - name: Install permanent Maven workflow
-        shell: bash
+      - name: Install Maven workflow
         run: |
+          mkdir -p .github/workflows
           cat > .github/workflows/maven-verify.yml <<'YAML'
           name: Maven verify
-          on:
-            push:
-              branches: [main, agent/real-maven-validation]
-            pull_request:
-            workflow_dispatch:
+          on: [push, pull_request, workflow_dispatch]
           permissions:
             contents: read
           jobs:
@@ -104,48 +89,18 @@ jobs:
                     distribution: temurin
                     java-version: '21'
                     cache: maven
-                - name: Verify Maven Central access
-                  run: |
-                    set -euxo pipefail
-                    getent hosts repo.maven.apache.org
-                    curl -fsSI --retry 3 https://repo.maven.apache.org/maven2/
-                    mvn -B -ntp -e dependency:get -Dartifact=org.apache.calcite:calcite-core:1.42.0
-                - name: Maven clean verify
-                  run: mvn -B -ntp -e clean verify
-                - name: Upload test reports
-                  if: always()
-                  uses: actions/upload-artifact@v4
-                  with:
-                    name: surefire-reports
-                    path: '**/target/surefire-reports/**'
-                    if-no-files-found: ignore
+                - run: mvn -B -ntp -e clean verify
           YAML
-
-      - name: Replace bootstrap with project source
-        shell: bash
+      - name: Commit project source
         run: |
-          set -euo pipefail
           rm -rf .bootstrap .bootstrap-core .github/workflows/bootstrap-project.yml
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -A
           git commit -m 'Bootstrap Simple Federated JDBC project source'
           git push origin HEAD:${{ github.event.pull_request.head.ref }}
-
-      - name: Verify Maven Central access
+      - name: Verify Maven Central and build
         run: |
-          set -euxo pipefail
-          getent hosts repo.maven.apache.org
           curl -fsSI --retry 3 https://repo.maven.apache.org/maven2/
           mvn -B -ntp -e dependency:get -Dartifact=org.apache.calcite:calcite-core:1.42.0
-
-      - name: Maven clean verify
-        run: mvn -B -ntp -e clean verify
-
-      - name: Upload test reports
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: bootstrap-surefire-reports
-          path: '**/target/surefire-reports/**'
-          if-no-files-found: ignore
+          mvn -B -ntp -e clean verify
