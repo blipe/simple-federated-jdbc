@@ -19,12 +19,6 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.ref }}
 
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '21'
-          cache: maven
-
       - name: Verify and extract project archive
         shell: bash
         run: |
@@ -37,6 +31,12 @@ jobs:
           cp -a /tmp/project-core/src .
           cp -a /tmp/project-core/scripts .
           chmod +x scripts/*.sh
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
 
       - name: Install permanent Maven workflow
         shell: bash
