@@ -25,16 +25,17 @@ jobs:
           head=$(gh pr view "$PR" --json headRefName -q .headRefName)
           gh api --paginate "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments?per_page=100" > /tmp/comments.json
           python3 - <<'PY'
-          import json, os, pathlib
+          import json, pathlib
           rows=json.load(open('/tmp/comments.json'))
           parts={}
           for r in rows:
               b=r.get('body','')
               if b.startswith('SFJ2_PART_'):
-                  tag,data=b.split(':',1)
-                  parts[int(tag.removeprefix('SFJ2_PART_'))]=data.strip()
-          if sorted(parts) != list(range(14)):
-              raise SystemExit(f'expected parts 0..13, got {sorted(parts)}')
+                  tag,data=b.split(':',1); parts[int(tag.removeprefix('SFJ2_PART_'))]=data.strip()
+              elif b.startswith('SFJ2_PACK_'):
+                  tag,data=b.split(':',1); start=int(tag.removeprefix('SFJ2_PACK_')); data=data.strip()
+                  for off in range(0,len(data),16000): parts[start+off//16000]=data[off:off+16000]
+          if sorted(parts) != list(range(14)): raise SystemExit(f'expected parts 0..13, got {sorted(parts)}')
           pathlib.Path('/tmp/project.b64').write_text(''.join(parts[i] for i in range(14)))
           PY
           base64 -d /tmp/project.b64 > /tmp/project.tar.xz
@@ -49,9 +50,7 @@ jobs:
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add -A
-          test -f pom.xml
-          test -d src/main/java
-          test -d src/test/java
+          test -f pom.xml && test -d src/main/java && test -d src/test/java
           test "$(git ls-files | wc -l)" -ge 200
           git commit -m 'Import Simple Federated JDBC source'
           git push --force-with-lease origin "$head"
