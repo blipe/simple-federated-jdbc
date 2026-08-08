@@ -27,23 +27,25 @@ jobs:
           if len(parts)!=9: raise SystemExit(f'expected 9 chunks, found {len(parts)}')
           alphabet='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
           chunks=[]
-          for path,size,want in zip(parts,sizes,hashes):
+          for i,(path,size,want) in enumerate(zip(parts,sizes,hashes)):
               s=b''.join(pathlib.Path(path).read_bytes().split()).decode()
-              if len(s)==size-1:
+              if i==1 and len(s)==19999:
+                  ref=b''.join(pathlib.Path('.bootstrap-core/part-001-block-056.exact').read_bytes().split()).decode()
+                  target='741c7edbf38601b8653ed5a7b501de8297f007a8c70ac88f92da1b3129159a09'
                   found=[]
-                  for pos in range(len(s)+1):
+                  for pos in range(len(ref)+1):
                       for ch in alphabet:
-                          c=s[:pos]+ch+s[pos:]
-                          if hashlib.sha256(c.encode()).hexdigest()==want: found.append((pos,ch,c))
-                  if len(found)!=1: raise SystemExit(f'{path}: insertion repair candidates={len(found)}')
-                  pos,ch,s=found[0]; print(path,'inserted',repr(ch),'at',pos)
+                          b=ref[:pos]+ch+ref[pos:]
+                          if hashlib.sha256(b.encode()).hexdigest()==target: found.append(b)
+                  if len(found)!=1: raise SystemExit(f'block repair candidates={len(found)}')
+                  s=s[:5600]+found[0]+s[5699:]
               elif len(s)>size:
                   delta=len(s)-size; found=[]
                   for pos in range(len(s)-delta+1):
                       c=s[:pos]+s[pos+delta:]
-                      if hashlib.sha256(c.encode()).hexdigest()==want: found.append((pos,c))
+                      if hashlib.sha256(c.encode()).hexdigest()==want: found.append(c)
                   if len(found)!=1: raise SystemExit(f'{path}: deletion repair candidates={len(found)}')
-                  pos,s=found[0]; print(path,'removed',delta,'chars at',pos)
+                  s=found[0]
               if len(s)!=size or hashlib.sha256(s.encode()).hexdigest()!=want: raise SystemExit(f'{path}: content hash mismatch')
               chunks.append(s.encode())
           pathlib.Path('/tmp/project-core.tar.xz').write_bytes(base64.b64decode(b''.join(chunks),validate=True))
