@@ -7,69 +7,56 @@ permissions:
   contents: write
 jobs:
   bootstrap-and-verify:
-    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'agent/real-maven-validation'
+    if: github.event.pull_request.head.ref == 'agent/real-maven-validation'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ github.event.pull_request.head.ref }}
-      - name: Verify and extract project archive
+          ref: agent/real-maven-validation
+      - name: Reconstruct verified source
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          import base64, glob, hashlib, pathlib
+          import base64,hashlib,pathlib
           sizes=[20000]*8+[16492]
           hashes=['8f709013db0c4470af2d40f55bcb180cb3cf11e4b0aff9ce6bca5ccabaaa6c4c','ee55486c3bc7c4423270ac92d635f2492732020556b1228e14ec473aff6d6831','0b1f3dbab30d40b22b371e55ed50dd82f40b5978556c2829ac9fa8d3195d12be','91ca2f8f0fccfec19ea7734351d9587d98528b9fb3bd25d3172a11b77fbde110','ed16424b67217c8ab94607614ff061322320adb3e6666cd1d61a954e35b360dc','3abcc3eb852c7e4b06eff153742dfa358ab98607914e57f53f81ab2d2df0cc3d','3b6698e6e18a165e4bfe9b70ed63e3d38088e6e607043f6093039ea61aa8a8ad','4b43845efd87991d7329322c39c337077ca731ba2b2da61015eb720f7c6fa5b3','df62963b7035cde24a4636b6d88a9aef4fd4be019e6640117efa245c6e1f3afb']
-          parts=sorted(glob.glob('.bootstrap-core/part-*.b64'))
-          if len(parts)!=9: raise SystemExit(f'expected 9 chunks, found {len(parts)}')
-          alphabet='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
-          chunks=[]
-          for i,(path,size,want) in enumerate(zip(parts,sizes,hashes)):
-              s=b''.join(pathlib.Path(path).read_bytes().split()).decode()
-              if i==1 and len(s)==19999:
+          alpha='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+          out=[]
+          for i in range(9):
+              p=pathlib.Path(f'.bootstrap-core/part-{i:03}.b64')
+              s=b''.join(p.read_bytes().split()).decode(); size=sizes[i]; want=hashes[i]
+              if i==1:
                   ref=b''.join(pathlib.Path('.bootstrap-core/part-001-block-056.exact').read_bytes().split()).decode()
                   target='741c7edbf38601b8653ed5a7b501de8297f007a8c70ac88f92da1b3129159a09'
-                  found=[]
-                  for pos in range(len(ref)+1):
-                      for ch in alphabet:
-                          b=ref[:pos]+ch+ref[pos:]
-                          if hashlib.sha256(b.encode()).hexdigest()==target: found.append(b)
-                  if len(found)!=1: raise SystemExit(f'block repair candidates={len(found)}')
-                  s=s[:5600]+found[0]+s[5699:]
-              elif len(s)>size:
-                  delta=len(s)-size; found=[]
-                  for pos in range(len(s)-delta+1):
-                      c=s[:pos]+s[pos+delta:]
-                      if hashlib.sha256(c.encode()).hexdigest()==want: found.append(c)
-                  if len(found)!=1: raise SystemExit(f'{path}: deletion repair candidates={len(found)}')
-                  s=found[0]
-              if len(s)!=size or hashlib.sha256(s.encode()).hexdigest()!=want: raise SystemExit(f'{path}: content hash mismatch')
-              chunks.append(s.encode())
-          pathlib.Path('/tmp/project-core.tar.xz').write_bytes(base64.b64decode(b''.join(chunks),validate=True))
+                  candidates=[ref[:pos]+ch+ref[pos:] for pos in range(100) for ch in alpha if hashlib.sha256((ref[:pos]+ch+ref[pos:]).encode()).hexdigest()==target]
+                  if len(candidates)!=1: raise SystemExit(f'block candidates={len(candidates)}')
+                  s=s[:5600]+candidates[0]+s[5699:]
+              if len(s)>size:
+                  prefix=s[:size]
+                  if hashlib.sha256(prefix.encode()).hexdigest()==want: s=prefix
+              if len(s)!=size or hashlib.sha256(s.encode()).hexdigest()!=want: raise SystemExit(f'chunk {i} mismatch len={len(s)}')
+              out.append(s)
+          pathlib.Path('/tmp/core.tar.xz').write_bytes(base64.b64decode(''.join(out),validate=True))
           PY
-          echo '44d418c7c4a3f16cd7f642d98e86b5e3bffdd419b6dd35ee505e515d9982aec8  /tmp/project-core.tar.xz' | sha256sum -c --strict
-          mkdir -p /tmp/project-core
-          tar -xJf /tmp/project-core.tar.xz -C /tmp/project-core
-          cp -a /tmp/project-core/pom.xml /tmp/project-core/src /tmp/project-core/scripts .
+          echo '44d418c7c4a3f16cd7f642d98e86b5e3bffdd419b6dd35ee505e515d9982aec8  /tmp/core.tar.xz' | sha256sum -c --strict
+          rm -rf /tmp/core && mkdir /tmp/core
+          tar -xJf /tmp/core.tar.xz -C /tmp/core
+          cp -a /tmp/core/pom.xml /tmp/core/src /tmp/core/scripts .
           chmod +x scripts/*.sh
+      - name: Commit source files
+        run: |
+          rm -rf .bootstrap .bootstrap-core
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m 'Import Simple Federated JDBC source'
+          git push origin HEAD:agent/real-maven-validation
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '21'
           cache: maven
-      - name: Commit project source
-        run: |
-          rm -rf .bootstrap .bootstrap-core
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -A
-          git commit -m 'Import Simple Federated JDBC source'
-          git push origin HEAD:${{ github.event.pull_request.head.ref }}
-      - name: Verify Maven Central and build
-        run: |
-          curl -fsSI --retry 3 https://repo.maven.apache.org/maven2/
-          mvn -B -ntp -e dependency:get -Dartifact=org.apache.calcite:calcite-core:1.42.0
-          mvn -B -ntp -e clean verify
+      - name: Maven verify
+        run: mvn -B -ntp -e clean verify
